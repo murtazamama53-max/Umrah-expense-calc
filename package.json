@@ -1,0 +1,38 @@
+{
+  "name": "umrah-wallet",
+  "private": true,
+  "version": "0.0.0",
+  "type": "module",
+  "description": "Umrah Wallet — Personal SAR expense tracker and PKR acquisition rate calculator for Umrah trips",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "preview": "vite preview",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "test:ui": "vitest --ui",
+    "test:coverage": "vitest run --coverage",
+    "lint": "oxlint src"
+  },
+  "dependencies": {
+    "chart.js": "^4.5.1",
+    "decimal.js": "^10.6.0",
+    "dexie": "^4.4.5",
+    "lucide-react": "^1.43.0",
+    "react": "^19.2.8",
+    "react-chartjs-2": "^5.3.1",
+    "react-dom": "^19.2.8",
+    "react-router-dom": "^7.18.3"
+  },
+  "devDependencies": {
+    "@types/react": "^19.2.18",
+    "@types/react-dom": "^19.2.4",
+    "@vitejs/plugin-react": "^6.1.0",
+    "@vitest/ui": "^5.0.0",
+    "jsdom": "^30.0.1",
+    "oxlint": "^1.79.0",
+    "vite": "^8.2.2",
+    "vite-plugin-pwa": "^1.3.0",
+    "vitest": "^5.0.0"
+  }
+}
