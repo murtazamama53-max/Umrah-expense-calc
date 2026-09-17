@@ -1,0 +1,9 @@
+# Deployment configuration only — not a Python package manifest.
+#
+# This tells Vercel where the Flask `app` instance lives, since it's built
+# via a factory function (backend/__init__.py:create_app) rather than a
+# bare module-level `app` variable in one of Vercel's auto-detected
+# filenames (app.py/index.py/server.py/main.py/wsgi.py/asgi.py at the repo
+# root or inside src/ or app/). No other tooling reads this file.
+[tool.vercel]
+entrypoint = "backend.server:app"

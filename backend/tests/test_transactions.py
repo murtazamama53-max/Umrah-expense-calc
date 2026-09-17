@@ -45,6 +45,20 @@ class TestCreateTransaction:
         })
         assert resp.status_code == 400
 
+    def test_rejects_zero_amount_sar(self, client, trip, category):
+        resp = client.post('/api/transactions/', json={
+            'tripId': trip['id'], 'type': 'EXPENSE', 'amountSar': '0',
+            'categoryId': category['id'], 'date': '2026-09-26',
+        })
+        assert resp.status_code == 400
+
+    def test_rejects_negative_amount_sar(self, client, trip, category):
+        resp = client.post('/api/transactions/', json={
+            'tripId': trip['id'], 'type': 'EXPENSE', 'amountSar': '-10',
+            'categoryId': category['id'], 'date': '2026-09-26',
+        })
+        assert resp.status_code == 400
+
 
 class TestHistoricalImmutability:
     def test_new_exchange_does_not_change_past_transaction(self, client, trip, category):

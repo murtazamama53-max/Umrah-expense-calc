@@ -1,0 +1,17 @@
+# Vercel production dependencies for the Flask backend.
+#
+# This mirrors backend/requirements.txt's runtime packages exactly (same
+# pinned versions) but drops pytest/pytest-flask (dev/test-only — Vercel's
+# own guidance is to keep production bundles to runtime packages) and
+# drops `requests` (not imported anywhere in backend/). It adds
+# psycopg2-binary, which is required to connect to a Postgres DATABASE_URL
+# — the existing sqlite-based backend/requirements.txt never needed it.
+#
+# backend/requirements.txt is unchanged and remains what you use for local
+# development and running the test suite.
+Flask==3.1.1
+Flask-SQLAlchemy==3.1.1
+Flask-Migrate==4.1.0
+Flask-CORS==5.0.1
+python-dotenv==1.1.1
+psycopg2-binary==2.9.13

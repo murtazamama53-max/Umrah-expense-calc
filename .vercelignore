@@ -1,0 +1,10 @@
+# Deployment-only exclusions. Local development is unaffected —
+# these files still exist and work exactly as before on your machine.
+
+venv
+**/__pycache__
+*.pyc
+.pytest_cache
+backend/tests
+instance
+coverage

@@ -26,6 +26,18 @@ class TestCreateExchange:
         })
         assert resp.status_code == 400
 
+    def test_rejects_zero_pkr_given(self, client, trip):
+        resp = client.post('/api/exchanges/', json={
+            'tripId': trip['id'], 'pkrGiven': '0', 'sarReceived': '10', 'date': '2026-09-25',
+        })
+        assert resp.status_code == 400
+
+    def test_rejects_negative_pkr_given(self, client, trip):
+        resp = client.post('/api/exchanges/', json={
+            'tripId': trip['id'], 'pkrGiven': '-100', 'sarReceived': '10', 'date': '2026-09-25',
+        })
+        assert resp.status_code == 400
+
     def test_rejects_missing_trip(self, client):
         resp = client.post('/api/exchanges/', json={
             'tripId': 999, 'pkrGiven': '100', 'sarReceived': '1', 'date': '2026-09-25',
