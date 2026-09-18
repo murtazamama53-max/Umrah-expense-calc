@@ -219,3 +219,107 @@ export async function getWalletSummary(tripId) {
     transactionCount: transactions.length,
   };
 }
+
+/**
+ * Update an existing expense/refund.
+ *
+ * pkrEquivalent is recalculated based on the NEW amountSar but using the
+ * HISTORICAL acquisitionRateUsed that was snapshotted when the expense
+ * was originally created. This ensures we do not silently recalculate old
+ * expenses using a newer acquisition rate.
+ *
+ * @param {number} id
+ * @param {Object} updates
+ * @returns {Promise<Object>}
+ */
+export async function updateExpense(id, updates) {
+  if (!id) throw new Error('id is required');
+
+  const transaction = await db.transactions.get(id);
+  if (!transaction) throw new Error('Transaction not found');
+
+  const sanitized = { ...updates };
+
+  if (sanitized.amountSar !== undefined) {
+    const sar = new Decimal(sanitized.amountSar);
+    if (sar.lte(0)) throw new Error('amountSar must be greater than zero');
+    
+    sanitized.amountSar = sar.toFixed(2);
+    // Recalculate pkrEquivalent using the historical rate
+    const historicalRate = new Decimal(transaction.acquisitionRateUsed);
+    sanitized.pkrEquivalent = sar.times(historicalRate).toFixed(2);
+  }
+
+  if (sanitized.categoryId !== undefined) {
+    sanitized.categoryId = Number(sanitized.categoryId);
+  }
+
+  sanitized.isSynced = false;
+
+  await db.transactions.update(id, sanitized);
+  return db.transactions.get(id);
+}
+
+/**
+ * Delete an existing expense.
+ *
+ * @param {number} id
+ * @returns {Promise<void>}
+ */
+export async function deleteExpense(id) {
+  if (!id) throw new Error('id is required');
+  await db.transactions.delete(id);
+}
+
+/**
+ * Add a custom category.
+ */
+export async function addCategory(tripId, name, icon) {
+  if (!name) throw new Error('Category name is required');
+  const now = new Date().toISOString();
+  
+  // Find max sort order
+  const cats = await db.categories.where('tripId').equals(tripId).toArray();
+  const maxSort = cats.reduce((max, c) => Math.max(max, c.sortOrder || 0), 0);
+  
+  const record = {
+    tripId,
+    name: name.trim(),
+    icon: icon ? icon.trim() : '📦',
+    parentId: null,
+    isDefault: false,
+    sortOrder: maxSort + 1,
+    createdAt: now
+  };
+  const id = await db.categories.add(record);
+  return { id, ...record };
+}
+
+/**
+ * Update a category (name/icon).
+ */
+export async function updateCategory(id, updates) {
+  const category = await db.categories.get(id);
+  if (!category) throw new Error('Category not found');
+  
+  const sanitized = {};
+  if (updates.name !== undefined) sanitized.name = updates.name.trim();
+  if (updates.icon !== undefined) sanitized.icon = updates.icon.trim();
+  
+  await db.categories.update(id, sanitized);
+  return db.categories.get(id);
+}
+
+/**
+ * Delete a category if not in use and not default.
+ */
+export async function deleteCategory(id) {
+  const category = await db.categories.get(id);
+  if (!category) throw new Error('Category not found');
+  if (category.isDefault) throw new Error('Cannot delete default categories');
+  
+  const usageCount = await db.transactions.where('categoryId').equals(id).count();
+  if (usageCount > 0) throw new Error('Cannot delete category because it is in use by expenses');
+  
+  await db.categories.delete(id);
+}

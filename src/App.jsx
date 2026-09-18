@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState, useRef } from 'react';
 import { HashRouter, NavLink, Navigate, Route, Routes } from 'react-router-dom';
 import {
   AlertCircle,
@@ -12,6 +12,7 @@ import {
   RefreshCcw,
 } from 'lucide-react';
 import './App.css';
+import { exportBackupData, importBackupData } from './services/backupService.js';
 import { ensureAppData } from './services/appDataService.js';
 import { calcAcquisitionRate } from './services/exchangeService.js';
 import {
@@ -20,6 +21,10 @@ import {
   getWalletSummary,
   listExchanges,
   listExpenses,
+  updateExpense,
+  deleteExpense,
+  addCategory,
+  deleteCategory,
 } from './services/walletService.js';
 import {
   calculateSarToPkr,
@@ -177,6 +182,14 @@ function AppShell({ trip, children, onRefresh }) {
         <NavLink to="/expenses">
           <ReceiptText size={19} aria-hidden="true" />
           <span>Expense</span>
+        </NavLink>
+        <NavLink to="/categories">
+          <span style={{fontSize: '19px', padding: '0 2px'}}>📦</span>
+          <span>Categories</span>
+        </NavLink>
+        <NavLink to="/settings">
+          <span style={{fontSize: '19px', padding: '0 2px'}}>⚙️</span>
+          <span>Settings</span>
         </NavLink>
       </nav>
     </div>
@@ -577,6 +590,233 @@ function ExchangeScreen({ trip, categories, refreshKey, onDataChanged }) {
   );
 }
 
+
+function ExpenseHistory({ expenses, categoryLookup, onDataChanged }) {
+  const [filters, setFilters] = useState({
+    search: '',
+    categoryId: 'all',
+    datePreset: 'all',
+    dateFrom: '',
+    dateTo: '',
+    sort: 'newest',
+  });
+  const [editingId, setEditingId] = useState(null);
+  const [editForm, setEditForm] = useState({});
+
+  const categories = Array.from(categoryLookup.values());
+
+  const filtered = useMemo(() => {
+    let result = expenses.filter(exp => {
+      if (filters.search) {
+        const q = filters.search.toLowerCase();
+        const noteMatch = (exp.note || '').toLowerCase().includes(q);
+        const locMatch = (exp.location || '').toLowerCase().includes(q);
+        if (!noteMatch && !locMatch) return false;
+      }
+      if (filters.categoryId !== 'all' && String(exp.categoryId) !== filters.categoryId) {
+        return false;
+      }
+      if (filters.datePreset !== 'all') {
+        const expDate = exp.date;
+        const now = new Date();
+        const toISO = (d) => {
+          const yr = d.getFullYear();
+          const mo = String(d.getMonth() + 1).padStart(2, '0');
+          const da = String(d.getDate()).padStart(2, '0');
+          return `${yr}-${mo}-${da}`;
+        };
+        const today = toISO(now);
+        const yesterdayDate = new Date(now);
+        yesterdayDate.setDate(now.getDate() - 1);
+        const yesterday = toISO(yesterdayDate);
+
+        if (filters.datePreset === 'today' && expDate !== today) return false;
+        if (filters.datePreset === 'yesterday' && expDate !== yesterday) return false;
+        if (filters.datePreset === 'week') {
+          const firstDay = new Date(now);
+          firstDay.setDate(now.getDate() - now.getDay());
+          const lastDay = new Date(firstDay);
+          lastDay.setDate(firstDay.getDate() + 6);
+          if (expDate < toISO(firstDay) || expDate > toISO(lastDay)) return false;
+        }
+        if (filters.datePreset === 'month') {
+          if (expDate.slice(0, 7) !== today.slice(0, 7)) return false;
+        }
+        if (filters.datePreset === 'custom') {
+          if (filters.dateFrom && expDate < filters.dateFrom) return false;
+          if (filters.dateTo && expDate > filters.dateTo) return false;
+        }
+      }
+      return true;
+    });
+
+    if (filters.sort === 'oldest') {
+      result.sort((a, b) => {
+        const dateCompare = a.date.localeCompare(b.date);
+        if (dateCompare !== 0) return dateCompare;
+        return (a.id || 0) - (b.id || 0);
+      });
+    } else {
+      result.sort((a, b) => {
+        const dateCompare = b.date.localeCompare(a.date);
+        if (dateCompare !== 0) return dateCompare;
+        return (b.id || 0) - (a.id || 0);
+      });
+    }
+    return result;
+  }, [expenses, filters]);
+
+  const totalSar = filtered.reduce((sum, exp) => sum + Number(exp.amountSar), 0);
+  const totalPkr = filtered.reduce((sum, exp) => sum + Number(exp.pkrEquivalent), 0);
+
+  async function handleDelete(id) {
+    if (window.confirm('Are you sure you want to delete this expense?')) {
+      try {
+        await deleteExpense(id);
+        onDataChanged();
+      } catch (err) {
+        alert(err.message);
+      }
+    }
+  }
+
+  function startEdit(exp) {
+    setEditingId(exp.id);
+    setEditForm({
+      date: exp.date,
+      amountSar: exp.amountSar,
+      categoryId: exp.categoryId,
+      note: exp.note || '',
+    });
+  }
+
+  async function handleSaveEdit(e) {
+    e.preventDefault();
+    try {
+      await updateExpense(editingId, {
+        date: editForm.date,
+        amountSar: editForm.amountSar,
+        categoryId: editForm.categoryId,
+        note: editForm.note,
+      });
+      setEditingId(null);
+      onDataChanged();
+    } catch (err) {
+      alert(err.message);
+    }
+  }
+
+  return (
+    <div className="expense-history">
+      <div className="filters-grid" style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem', marginBottom: '1rem' }}>
+        <input
+          type="search"
+          placeholder="Search expenses..."
+          value={filters.search}
+          onChange={e => setFilters(f => ({ ...f, search: e.target.value }))}
+          className="field"
+          style={{ width: '100%', padding: '0.5rem', background: 'var(--color-surface)', color: 'var(--color-text)', border: '1px solid var(--color-border)', borderRadius: 'var(--radius-md)' }}
+        />
+        <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap' }}>
+          <select
+            value={filters.categoryId}
+            onChange={e => setFilters(f => ({ ...f, categoryId: e.target.value }))}
+            style={{ padding: '0.5rem', flex: 1, background: 'var(--color-surface)', color: 'var(--color-text)', border: '1px solid var(--color-border)', borderRadius: 'var(--radius-md)' }}
+          >
+            <option value="all">All categories</option>
+            {categories.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
+          </select>
+          <select
+            value={filters.datePreset}
+            onChange={e => setFilters(f => ({ ...f, datePreset: e.target.value }))}
+            style={{ padding: '0.5rem', flex: 1, background: 'var(--color-surface)', color: 'var(--color-text)', border: '1px solid var(--color-border)', borderRadius: 'var(--radius-md)' }}
+          >
+            <option value="all">All dates</option>
+            <option value="today">Today</option>
+            <option value="yesterday">Yesterday</option>
+            <option value="week">This Week</option>
+            <option value="month">This Month</option>
+            <option value="custom">Custom Range</option>
+          </select>
+          <select
+            value={filters.sort}
+            onChange={e => setFilters(f => ({ ...f, sort: e.target.value }))}
+            style={{ padding: '0.5rem', flex: 1, background: 'var(--color-surface)', color: 'var(--color-text)', border: '1px solid var(--color-border)', borderRadius: 'var(--radius-md)' }}
+          >
+            <option value="newest">Newest first</option>
+            <option value="oldest">Oldest first</option>
+          </select>
+        </div>
+        {filters.datePreset === 'custom' && (
+          <div style={{ display: 'flex', gap: '0.5rem' }}>
+            <input
+              type="date"
+              value={filters.dateFrom}
+              onChange={e => setFilters(f => ({ ...f, dateFrom: e.target.value }))}
+              style={{ padding: '0.5rem', flex: 1, background: 'var(--color-surface)', color: 'var(--color-text)', border: '1px solid var(--color-border)', borderRadius: 'var(--radius-md)' }}
+            />
+            <input
+              type="date"
+              value={filters.dateTo}
+              onChange={e => setFilters(f => ({ ...f, dateTo: e.target.value }))}
+              style={{ padding: '0.5rem', flex: 1, background: 'var(--color-surface)', color: 'var(--color-text)', border: '1px solid var(--color-border)', borderRadius: 'var(--radius-md)' }}
+            />
+          </div>
+        )}
+      </div>
+
+      <div className="filtered-summary" style={{ padding: '0.75rem', backgroundColor: 'var(--color-surface-dim)', borderRadius: 'var(--radius-md)', marginBottom: '1rem', display: 'flex', justifyContent: 'space-between', fontSize: '0.9rem' }}>
+        <span><strong>{filtered.length}</strong> matching</span>
+        <div style={{ textAlign: 'right' }}>
+          <div><strong>{formatSar(totalSar)}</strong></div>
+          <div style={{ color: 'var(--color-text-dim)' }}>{formatPkr(totalPkr)}</div>
+        </div>
+      </div>
+
+      <div className="timeline-list">
+        {filtered.length === 0 && <div className="empty-state">No matching expenses found.</div>}
+        {filtered.map(exp => {
+          const category = categoryLookup.get(exp.categoryId);
+          if (editingId === exp.id) {
+            return (
+              <form key={exp.id} onSubmit={handleSaveEdit} className="timeline-item" style={{ flexDirection: 'column', gap: '0.5rem', alignItems: 'stretch' }}>
+                <input type="date" value={editForm.date} onChange={e => setEditForm(f => ({ ...f, date: e.target.value }))} required style={{ padding: '0.5rem', background: 'var(--color-surface)', color: 'var(--color-text)', border: '1px solid var(--color-border)', borderRadius: 'var(--radius-md)' }} />
+                <input type="number" step="0.01" value={editForm.amountSar} onChange={e => setEditForm(f => ({ ...f, amountSar: e.target.value }))} required placeholder="SAR Amount" style={{ padding: '0.5rem', background: 'var(--color-surface)', color: 'var(--color-text)', border: '1px solid var(--color-border)', borderRadius: 'var(--radius-md)' }} />
+                <select value={editForm.categoryId} onChange={e => setEditForm(f => ({ ...f, categoryId: Number(e.target.value) }))} required style={{ padding: '0.5rem', background: 'var(--color-surface)', color: 'var(--color-text)', border: '1px solid var(--color-border)', borderRadius: 'var(--radius-md)' }}>
+                  {categories.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
+                </select>
+                <input type="text" value={editForm.note} onChange={e => setEditForm(f => ({ ...f, note: e.target.value }))} placeholder="Description" required style={{ padding: '0.5rem', background: 'var(--color-surface)', color: 'var(--color-text)', border: '1px solid var(--color-border)', borderRadius: 'var(--radius-md)' }} />
+                <div style={{ display: 'flex', gap: '0.5rem', marginTop: '0.5rem' }}>
+                  <button type="submit" className="button button--primary" style={{ flex: 1 }}>Save</button>
+                  <button type="button" className="button" style={{ flex: 1 }} onClick={() => setEditingId(null)}>Cancel</button>
+                </div>
+              </form>
+            );
+          }
+          return (
+            <article className="timeline-item" key={exp.id} style={{ flexDirection: 'column', alignItems: 'stretch' }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '0.25rem' }}>
+                <div>
+                  <strong>{formatSar(exp.amountSar)}</strong>
+                  <span style={{ display: 'block', fontSize: '0.9rem' }}>{exp.note || category?.name}</span>
+                </div>
+                <div style={{ textAlign: 'right' }}>
+                  <strong>{formatPkr(exp.pkrEquivalent)}</strong>
+                  <span style={{ display: 'block', fontSize: '0.9rem' }}>{category?.name} - {exp.date}</span>
+                </div>
+              </div>
+              <div style={{ display: 'flex', gap: '0.5rem', justifyContent: 'flex-end', marginTop: '0.25rem' }}>
+                <button type="button" onClick={() => startEdit(exp)} style={{ padding: '0.25rem 0.5rem', fontSize: '0.8rem', background: 'var(--color-surface)', border: '1px solid var(--color-border)', borderRadius: '4px', cursor: 'pointer', color: 'var(--color-text)' }}>Edit</button>
+                <button type="button" onClick={() => handleDelete(exp.id)} style={{ padding: '0.25rem 0.5rem', fontSize: '0.8rem', background: 'var(--color-surface)', border: '1px solid var(--color-border)', borderRadius: '4px', cursor: 'pointer', color: 'var(--color-danger)' }}>Delete</button>
+              </div>
+            </article>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
 function ExpenseScreen({ trip, categories, refreshKey, onDataChanged }) {
   const walletState = useWalletData(trip.id, categories, refreshKey);
   const defaultCategoryId = categories[0]?.id ? String(categories[0].id) : '';
@@ -773,8 +1013,129 @@ function ExpenseScreen({ trip, categories, refreshKey, onDataChanged }) {
         {walletState.status === 'loading' ? (
           <LoadingScreen message="Loading expense history..." />
         ) : (
-          <RecentExpenseList expenses={expenses} categoryLookup={categoryLookup} />
+          <ExpenseHistory expenses={expenses} categoryLookup={categoryLookup} onDataChanged={onDataChanged} />
         )}
+      </section>
+    </div>
+  );
+}
+
+
+function CategoriesScreen({ trip, categories, onDataChanged }) {
+  const [name, setName] = useState('');
+  const [icon, setIcon] = useState('📦');
+  const [error, setError] = useState(null);
+
+  async function handleAdd(e) {
+    e.preventDefault();
+    setError(null);
+    try {
+      await addCategory(trip.id, name, icon);
+      setName('');
+      setIcon('📦');
+      onDataChanged();
+    } catch (err) {
+      setError(err.message);
+    }
+  }
+
+  async function handleDelete(id) {
+    if (window.confirm('Delete category?')) {
+      try {
+        await deleteCategory(id);
+        onDataChanged();
+      } catch (err) {
+        alert(err.message);
+      }
+    }
+  }
+
+  return (
+    <div className="screen-stack">
+      <section className="panel">
+        <div className="section-heading">
+          <div><p className="eyebrow">Manage</p><h2>Categories</h2></div>
+        </div>
+        {error && <div className="feedback feedback--error">{error}</div>}
+        <form onSubmit={handleAdd} className="form-grid">
+          <label className="field"><span>Name</span><input value={name} onChange={e => setName(e.target.value)} required placeholder="e.g. Gifts" /></label>
+          <label className="field"><span>Icon</span><input value={icon} onChange={e => setIcon(e.target.value)} required placeholder="e.g. 🎁" /></label>
+          <button className="button button--primary field--full" type="submit">Add Category</button>
+        </form>
+      </section>
+
+      <section className="panel">
+        <div className="timeline-list">
+          {categories.map(c => (
+            <article className="timeline-item" key={c.id}>
+              <div><strong>{c.icon} {c.name}</strong></div>
+              <div>
+                {!c.isDefault && <button type="button" onClick={() => handleDelete(c.id)} className="button" style={{color: 'var(--color-danger)', border: '1px solid var(--color-border)', background: 'var(--color-surface)', padding: '0.25rem 0.5rem', borderRadius: '4px'}}>Delete</button>}
+              </div>
+            </article>
+          ))}
+        </div>
+      </section>
+    </div>
+  );
+}
+
+function SettingsScreen({ onDataChanged: _onDataChanged }) {
+  const [error, setError] = useState(null);
+  const [msg, setMsg] = useState(null);
+  const fileInputRef = useRef(null);
+
+  async function handleExport() {
+    try {
+      const json = await exportBackupData();
+      const blob = new Blob([json], { type: 'application/json' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `umrah-wallet-backup-${new Date().toISOString().slice(0,10)}.json`;
+      a.click();
+      URL.revokeObjectURL(url);
+    } catch (err) {
+      setError(err.message);
+    }
+  }
+
+  async function handleImport(e) {
+    const file = e.target.files[0];
+    if (!file) return;
+    
+    if (window.confirm('This will replace all your current data. Are you sure?')) {
+      try {
+        const text = await file.text();
+        await importBackupData(text);
+        setMsg('Data restored successfully!');
+        setError(null);
+        window.location.reload();
+      } catch (err) {
+        setError(err.message);
+      }
+    }
+    e.target.value = '';
+  }
+
+  return (
+    <div className="screen-stack">
+      <section className="panel">
+        <div className="section-heading">
+          <div><p className="eyebrow">Data</p><h2>Backup & Restore</h2></div>
+        </div>
+        {error && <div className="feedback feedback--error">{error}</div>}
+        {msg && <div className="feedback feedback--success"><CheckCircle2 size={17} /><span>{msg}</span></div>}
+        
+        <div className="form-grid">
+          <button className="button button--primary field--full" onClick={handleExport}>Export Backup (JSON)</button>
+          
+          <div className="field--full" style={{marginTop: '1rem'}}>
+             <p style={{marginBottom: '0.5rem', fontSize: '0.9rem', color: 'var(--color-text-dim)'}}>Restore from backup</p>
+             <input type="file" accept=".json" onChange={handleImport} ref={fileInputRef} style={{display: 'none'}} />
+             <button className="button field--full" onClick={() => fileInputRef.current.click()}>Import Backup</button>
+          </div>
+        </div>
       </section>
     </div>
   );
@@ -869,6 +1230,20 @@ function App() {
                 onDataChanged={handleDataChanged}
               />
             )}
+          />
+          <Route
+            path="/categories"
+            element={
+              <CategoriesScreen
+                trip={bootState.trip}
+                categories={bootState.categories}
+                onDataChanged={handleDataChanged}
+              />
+            }
+          />
+          <Route
+            path="/settings"
+            element={<SettingsScreen onDataChanged={handleDataChanged} />}
           />
           <Route path="*" element={<Navigate to="/" replace />} />
         </Routes>

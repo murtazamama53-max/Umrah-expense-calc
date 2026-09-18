@@ -7,6 +7,8 @@ import { describe, it, expect, beforeEach } from 'vitest';
 import { db } from '../src/db/dexie.js';
 import {
   addExchange,
+  updateExpense,
+  deleteExpense,
   addExpense,
   listExchanges,
   listExpenses,
@@ -331,5 +333,64 @@ describe('listExchanges / listExpenses', () => {
     expect(exchanges).toHaveLength(2);
     expect(exchanges[0].date).toBe('2026-09-25');
     expect(exchanges[1].date).toBe('2026-10-01');
+  });
+});
+
+
+describe('updateExpense — edit an expense', () => {
+  it('updates fields correctly', async () => {
+    await addExchange(TRIP_ID, { pkrGiven: '74900', sarReceived: '1000', date: '2026-09-25' });
+    const categoryId = await makeCategory();
+    const expense = await addExpense(TRIP_ID, { amountSar: '100', categoryId, date: '2026-09-26' });
+
+    await updateExpense(expense.id, { date: '2026-09-27', amountSar: '150', categoryId: categoryId + 1, note: 'Updated' });
+    
+    const updated = await db.transactions.get(expense.id);
+    expect(updated.date).toBe('2026-09-27');
+    expect(updated.amountSar).toBe('150.00');
+    expect(updated.categoryId).toBe(categoryId + 1);
+    expect(updated.note).toBe('Updated');
+  });
+
+  it('recalculates pkrEquivalent using historical acquisitionRateUsed when amountSar changes', async () => {
+    await addExchange(TRIP_ID, { pkrGiven: '74900', sarReceived: '1000', date: '2026-09-25' }); // Rate = 74.90
+    const categoryId = await makeCategory();
+    const expense = await addExpense(TRIP_ID, { amountSar: '100', categoryId, date: '2026-09-26' });
+    expect(expense.pkrEquivalent).toBe('7490.00');
+    expect(expense.acquisitionRateUsed).toBe('74.900000');
+
+    // Add a new exchange that would change the current average rate
+    await addExchange(TRIP_ID, { pkrGiven: '200000', sarReceived: '1000', date: '2026-10-01' });
+
+    // Update amountSar
+    await updateExpense(expense.id, { amountSar: '200' });
+    
+    const updated = await db.transactions.get(expense.id);
+    expect(updated.amountSar).toBe('200.00');
+    expect(updated.acquisitionRateUsed).toBe('74.900000'); // Remains the same
+    expect(updated.pkrEquivalent).toBe('14980.00'); // 200 * 74.90, NOT using new average
+  });
+
+  it('throws if amountSar is zero or negative', async () => {
+    await addExchange(TRIP_ID, { pkrGiven: '74900', sarReceived: '1000', date: '2026-09-25' });
+    const categoryId = await makeCategory();
+    const expense = await addExpense(TRIP_ID, { amountSar: '100', categoryId, date: '2026-09-26' });
+
+    await expect(updateExpense(expense.id, { amountSar: '0' })).rejects.toThrow(/amountSar/);
+    await expect(updateExpense(expense.id, { amountSar: '-10' })).rejects.toThrow(/amountSar/);
+  });
+});
+
+describe('deleteExpense', () => {
+  it('deletes the expense from the database', async () => {
+    await addExchange(TRIP_ID, { pkrGiven: '74900', sarReceived: '1000', date: '2026-09-25' });
+    const categoryId = await makeCategory();
+    const expense = await addExpense(TRIP_ID, { amountSar: '100', categoryId, date: '2026-09-26' });
+    
+    expect(await db.transactions.count()).toBe(1);
+    
+    await deleteExpense(expense.id);
+    
+    expect(await db.transactions.count()).toBe(0);
   });
 });
